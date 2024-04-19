@@ -1,0 +1,183 @@
+---
+title: "exercise-12"
+output: html_document
+date: "2024-04-19"
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+### Load in libraries
+```{r}
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(MASS)
+library(MuMIn)
+```
+
+### Read in file
+```{r}
+f <- "https://raw.githubusercontent.com/difiore/ada-2024-datasets/main/Mammal_lifehistories_v2.txt"
+
+d <- read_tsv(f)
+```
+
+### Exploratory analysis using skim from {skimr}
+```{r}
+skim(d)
+
+### There are 4 categorical variables: order, family, Genus, and species
+### There are 10 numeric variables: mass, gestation, newborn, weaning,
+### weaning mass, AFR, max. life, litter size, litters/year, and refs
+```
+
+### "Wrangle" Dataset
+```{r}
+### Replace NAs, winnow dataset, and log transform numeric variables
+d <- d %>%
+  replace_with_na_all(condition = ~.x == -999.00) %>%
+  subset(select=-c(refs,`litter size`)) %>%
+  mutate( log_Mass = log(`mass(g)`),
+          log_Gest = log(`gestation(mo)`),
+          log_NewB = log(`newborn(g)`),
+          log_WeanMo = log(`weaning(mo)`),
+          log_WeanMass = log(`wean mass(g)`),
+          log_AFR = log(`AFR(mo)`),
+          log_MaxLife = log(`max. life(mo)`),
+          log_LitpYear = log(`litters/year`))
+
+### Create new "relative" variables by regressing log transformed variables
+### on log transformed body mass. 
+d <- d %>%
+  mutate(relGest = resid(lm(log_Gest ~ log_Mass, data = d,
+                            na.action=na.exclude)),
+         relWean = resid(lm(log_WeanMo ~ log_Mass, data = d,
+                            na.action=na.exclude)),
+         relAFR = resid(lm(log_AFR ~ log_Mass, data = d,
+                           na.action=na.exclude)),
+         relLife = resid(lm(log_MaxLife ~ log_Mass, data = d,
+                            na.action=na.exclude)),
+         relNewbornMass = resid(lm(log_NewB ~ log_Mass, data = d,
+                                   na.action=na.exclude)),
+         relWeaningMass = resid(lm(log_WeanMass ~ log_Mass, data = d,
+                                   na.action=na.exclude)),)
+```
+
+### Plot relative max life, newborn mass, and weaning mass by order
+```{r}
+### Relative max life by order plot
+
+### Primates appear to have the highest residual lifespan followed by
+### Xenartha and Scandentia 
+rMLp <- ggplot(data = d, aes(x = order, y = relLife, fill = order)) +
+  geom_boxplot() +
+  xlab("Order") +
+  ylab("Relative Max Life") +
+  theme(axis.text.x = element_text(angle = 90))
+rMLp
+
+### Relative newborn mass by order plot
+
+### Macroscelidea appear to have the highest residual newborn mass, though
+### their data is limited, they are follwed by Cetacea and possibly
+### Perissodactyla
+rNMp <- ggplot(data = d, aes(x = order, y = relNewbornMass, fill = order)) +
+  geom_boxplot() +
+  xlab("Order") +
+  ylab("Relative Newborn Mass") +
+  theme(axis.text.x = element_text(angle = 90))
+rNMp
+
+### Relative newborn mass by order plot
+
+### Perissodactyla appear to have the highest residual weaning mass, but ### again have little data. This is followed by Cetatea. 
+rWMp <- ggplot(data = d, aes(x = order, y = relWeaningMass, fill = order)) +
+  geom_boxplot() +
+  xlab("Order") +
+  ylab("Relative Weaning Mass") +
+  theme(axis.text.x = element_text(angle = 90))
+rWMp
+```
+
+### Run models and a model selection process of max life as a response
+### variable with predictors: gestation, newborn, weaning, wean mass,
+### litters/year, and overall body mass
+```{r}
+### Subset data for max life response variable and predictors
+s <- d %>%
+  subset(select = c(log_MaxLife, log_Gest, log_NewB, log_WeanMo, 
+                             log_WeanMass, log_LitpYear, log_Mass)) %>%
+  drop_na()
+
+### Use dredge {MuMIn} to see model with lowest AICc
+### the model with gestation, litters per year, mass and weaning as the
+### predictors is the best model
+MLm <- lm(log_MaxLife ~ log_Gest + log_NewB + log_WeanMo + log_WeanMass +
+            log_LitpYear + log_Mass, data = s, na.action = na.fail) %>%
+  dredge(beta = "none")
+
+head(MLm)
+
+### 5 models had a delta AICc < 4
+### Gestation, Litters per Year, and Weaning were present in all of these
+### models
+MLm_avg <- summary(model.avg(MLm, subset = delta < 4, fit = TRUE))
+
+MLm_avg
+
+### Using a 95% confidence set the best model still has gestation, litters
+### per year, mass, and weaningm, but there are now 9 "top" models
+MLm_avg <- summary(model.avg(MLm, subset = cumsum(weight) <= 0.95, fit = TRUE))
+
+MLm_avg
+
+### Calculate 95% CI for model-averaged coefficients
+confint(MLm_avg)
+
+### Plot model-averaged coefficients and their CIs, across models
+### gestation and litters per year remain significant, though mass
+### and weaning are very close to zero.
+plot(MLm_avg, full = TRUE, intercept = FALSE)
+``` 
+
+### Run models and a model selection process of AFR as a response
+### variable with predictors: gestation, newborn, weaning, wean mass,
+### litters/year, and overall body mass
+```{r}
+### Subset data for max life response variable and predictors
+s <- d %>%
+  subset(select = c(log_AFR, log_Gest, log_NewB, log_WeanMo, 
+                             log_WeanMass, log_LitpYear, log_Mass)) %>%
+  drop_na()
+
+### Use dredge {MuMIn} to see model with lowest AICc
+### the model with gestation, litters per year, mass, and weaning as the
+### predictors is the best model
+AFRm <- lm(log_AFR ~ log_Gest + log_NewB + log_WeanMo + log_WeanMass +
+            log_LitpYear + log_Mass, data = s, na.action = na.fail) %>%
+  dredge(beta = "none")
+
+head(AFRm)
+
+### 7 models had a delta AICc < 4
+### Gestation, Litters per Year, and Weaning were present in all of these
+### models
+AFRm_avg <- summary(model.avg(AFRm, subset = delta < 4, fit = TRUE))
+
+AFRm_avg
+
+### Using a 95% confidence set the new "best model" has gestation, litters
+### per year, mass, and weaning, with 9 models meeting this condition.
+AFRm_avg <- summary(model.avg(AFRm, subset = cumsum(weight) <= 0.95, fit = TRUE))
+
+AFRm_avg
+
+### Calculate 95% CI for model-averaged coefficients
+confint(AFRm_avg)
+
+### Plot model-averaged coefficients and their CIs, across models only
+### gestation and litters per year are significant
+plot(AFRm_avg, full = TRUE, intercept = FALSE)
+``` 
